@@ -222,6 +222,68 @@ def format_money(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def format_int_br(n: int) -> str:
+    """Formata inteiro no padrão brasileiro, usando ponto como separador de milhar."""
+    try:
+        return f"{int(n):,}".replace(",", ".")
+    except Exception:
+        return str(n)
+
+
+def gerar_resumo_1_frase(df: pd.DataFrame, palavra_chave: Optional[str]) -> str:
+    """Gera um resumo executivo em uma única frase, baseado na base carregada."""
+    df_num, base_core = preparar_bases(df)
+
+    categoria = (palavra_chave or "categoria não informada").strip()
+    n_anuncios = len(df_num)
+
+    n_sellers = df_num["seller"].nunique() if "seller" in df_num.columns else 0
+    n_marcas = df_num["marca"].dropna().nunique() if "marca" in df_num.columns else 0
+
+    partes = []
+    partes.append(f"Para a pesquisa \"{categoria}\", foram coletados {format_int_br(n_anuncios)} anúncios")
+
+    if n_sellers and n_marcas:
+        partes.append(f"distribuídos entre {format_int_br(n_sellers)} sellers e {format_int_br(n_marcas)} marcas")
+    elif n_sellers:
+        partes.append(f"distribuídos entre {format_int_br(n_sellers)} sellers")
+    elif n_marcas:
+        partes.append(f"com {format_int_br(n_marcas)} marcas identificadas")
+
+    # Preço (faixa típica)
+    if "preco" in base_core.columns and base_core["preco"].dropna().shape[0] > 0:
+        s = base_core["preco"].dropna()
+        media = float(s.mean())
+        q1 = float(s.quantile(0.25))
+        q3 = float(s.quantile(0.75))
+        partes.append(f"com preço médio de {format_money(media)} e faixa típica (Q1–Q3) de {format_money(q1)} a {format_money(q3)}")
+
+    # Seller líder em volume de anúncios
+    if "seller" in df_num.columns:
+        vc = df_num["seller"].dropna().astype(str).value_counts()
+        if not vc.empty:
+            top_seller = vc.index[0]
+            partes.append(f"o seller com mais anúncios é \"{top_seller}\"")
+
+    # Cobertura de reputação
+    tem_rating = "rating" in df_num.columns and df_num["rating"].notna().any()
+    tem_reviews = "reviews" in df_num.columns and df_num["reviews"].notna().any()
+    if tem_rating or tem_reviews:
+        col_base = None
+        if tem_reviews:
+            col_base = df_num["reviews"].notna()
+        else:
+            col_base = df_num["rating"].notna()
+        pct = round(float(col_base.mean() * 100), 1) if n_anuncios else 0.0
+        partes.append(f"{pct}% dos anúncios têm sinais de reputação (rating/reviews)")
+
+    # Montagem final: uma frase só
+    frase = ", ".join([p for p in partes if p]).strip()
+    if not frase.endswith("."):
+        frase += "."
+    return frase
+
+
 # ==============================
 # Painel gráfico / Storytelling
 # ==============================
@@ -271,10 +333,10 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
     n_sellers = df_num["seller"].nunique() if "seller" in df_num.columns else 0
     n_marcas = df_num["marca"].nunique() if "marca" in df_num.columns else 0
 
-    preco_mediana_core = None
+    preco_medio_core = None
     pct_promo = None
     if "preco" in base_core.columns:
-        preco_mediana_core = base_core["preco"].dropna().median()
+        preco_medio_core = base_core["preco"].dropna().mean()
     if "desconto_percentual" in df_num.columns:
         base_desc = df_num["desconto_percentual"].dropna()
         if not base_desc.empty:
@@ -285,8 +347,8 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
     metric_card("Total Anúncios", f"{total_linhas:,}".replace(",", "."))
     metric_card("Total Sellers" , f"{n_sellers:,}".replace(",", "."))
     metric_card("Total Marcas", f"{n_marcas:,}".replace(",", "."))
-    if preco_mediana_core is not None and not math.isnan(preco_mediana_core):
-        metric_card("Mediana Preço (sem outliers)", format_money(preco_mediana_core))
+    if preco_medio_core is not None and not math.isnan(preco_medio_core):
+        metric_card("Média Preço (sem outliers)", format_money(preco_medio_core))
     if pct_promo is not None and not math.isnan(pct_promo):
         metric_card("% de anúncios em promoção", f"{pct_promo:.1f}%")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -978,8 +1040,12 @@ elif escolha != opcoes[0]:
         st.session_state["palavra_chave"] = palavra_atual
         st.success(f"CSV carregado: {arquivo_atual}")
 
-# Se há DataFrame carregado, mostra amostra e dashboard
+# Se há DataFrame carregado, mostra resumo + amostra e dashboard
 if df is not None and not df.empty:
+    st.markdown("## 0. Resumo executivo")
+    st.info(gerar_resumo_1_frase(df, palavra_atual).replace("$", r"\$"))
+    st.markdown("---")
+
     st.subheader("Amostra dos dados (até 50 linhas)")
     st.dataframe(df.head(50))
     st.markdown("---")
