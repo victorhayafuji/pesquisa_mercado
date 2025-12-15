@@ -24,7 +24,6 @@ import streamlit as st
 
 from config import OUTPUT_DIR  # mesma pasta onde os CSVs são salvos
 
-
 # =========================
 # Configuração global e tema
 # =========================
@@ -256,7 +255,8 @@ def gerar_resumo_1_frase(df: pd.DataFrame, palavra_chave: Optional[str]) -> str:
         media = float(s.mean())
         q1 = float(s.quantile(0.25))
         q3 = float(s.quantile(0.75))
-        partes.append(f"com preço médio de {format_money(media)} e faixa típica (Q1–Q3) de {format_money(q1)} a {format_money(q3)}")
+        partes.append(
+            f"com preço médio de {format_money(media)} e faixa típica (Q1–Q3) de {format_money(q1)} a {format_money(q3)}")
 
     # Seller líder em volume de anúncios
     if "seller" in df_num.columns:
@@ -299,7 +299,7 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
         st.markdown(
             f"""
             **Categoria analisada:** `{palavra_chave or "não informado"}`  
-            
+
             A unidade de análise é o anúncio individual no Google Shopping  
             (um produto em um seller específico).  
             O objetivo é entender faixas de preço, presença de sellers e marcas  
@@ -345,7 +345,7 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
     # Linha de cards de resumo
     st.markdown('<div class="metric-row">', unsafe_allow_html=True)
     metric_card("Total Anúncios", f"{total_linhas:,}".replace(",", "."))
-    metric_card("Total Sellers" , f"{n_sellers:,}".replace(",", "."))
+    metric_card("Total Sellers", f"{n_sellers:,}".replace(",", "."))
     metric_card("Total Marcas", f"{n_marcas:,}".replace(",", "."))
     if preco_medio_core is not None and not math.isnan(preco_medio_core):
         metric_card("Média Preço (sem outliers)", format_money(preco_medio_core))
@@ -562,7 +562,8 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
             if col in agg_sellers.columns:
                 agg_sellers[col] = agg_sellers[col].astype(float).round(2)
         if "reviews_totais" in agg_sellers.columns:
-            agg_sellers["reviews_totais"] = pd.to_numeric(agg_sellers["reviews_totais"], errors="coerce").fillna(0).astype(int)
+            agg_sellers["reviews_totais"] = pd.to_numeric(agg_sellers["reviews_totais"], errors="coerce").fillna(
+                0).astype(int)
 
         top_sellers = agg_sellers.sort_values("qtd_anuncios", ascending=False).head(10)
 
@@ -633,7 +634,8 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
             if col in agg_marcas.columns:
                 agg_marcas[col] = agg_marcas[col].astype(float).round(2)
         if "reviews_totais" in agg_marcas.columns:
-            agg_marcas["reviews_totais"] = pd.to_numeric(agg_marcas["reviews_totais"], errors="coerce").fillna(0).astype(int)
+            agg_marcas["reviews_totais"] = pd.to_numeric(agg_marcas["reviews_totais"], errors="coerce").fillna(
+                0).astype(int)
 
         top_marcas = agg_marcas.sort_values("qtd_anuncios", ascending=False).head(10)
 
