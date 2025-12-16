@@ -913,9 +913,9 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
 
             # Produtos âncora
             base_valida_sorted = base_valida.sort_values("reviews", ascending=False)
-            produtos_ancora = base_valida_sorted[base_valida_sorted["rating"] >= 4.0].head(5)
+            produtos_ancora = base_valida_sorted[base_valida_sorted["rating"] >= 4.0]
 
-            st.markdown("**Produtos âncora (mais reviews e boa nota)**")
+            st.markdown("**Produtos âncora (rating >= 4.0)**")
             cols_anchor = [c for c in [
                 "produto",
                 "seller",
@@ -923,6 +923,8 @@ def render_dashboard(df: pd.DataFrame, palavra_chave: Optional[str], caminho_arq
                 "preco",
                 "rating",
                 "reviews",
+                "link",
+                "score_relevancia",
             ] if c in produtos_ancora.columns]
             if not produtos_ancora.empty and cols_anchor:
                 df_anchor = produtos_ancora[cols_anchor].copy()
@@ -1048,8 +1050,8 @@ if df is not None and not df.empty:
     st.info(gerar_resumo_1_frase(df, palavra_atual).replace("$", r"\$"))
     st.markdown("---")
 
-    st.subheader("Amostra dos dados (até 50 linhas)")
-    st.dataframe(df.head(50))
+    st.subheader("Amostra dos dados")
+    st.dataframe(df)
     st.markdown("---")
     render_dashboard(df, palavra_atual, arquivo_atual)
 else:

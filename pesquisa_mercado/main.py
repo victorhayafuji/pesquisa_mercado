@@ -58,7 +58,7 @@ def coletar_varias_paginas(
             resposta_json = buscar_google_shopping(
                 q=palavra_chave,
                 page=page,
-                condition="new",  # foco em produtos novos (ajuste se quiser)
+                condition=None,  # ou simplesmente remover essa linha
             )
         except GoogleShoppingError as e:
             print(f"Erro na página {page}: {e}")
