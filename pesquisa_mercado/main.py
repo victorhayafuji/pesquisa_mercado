@@ -3,12 +3,84 @@
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import math
+import re
 
 import pandas as pd
 
 from config import OUTPUT_DIR, N_PAGINAS_DEFAULT
 from google_shopping_client import buscar_google_shopping, GoogleShoppingError
 from processador_resultados import extrair_resultados_basicos
+from pathlib import Path
+def _slugify(texto: str) -> str:
+    """Gera um identificador seguro para nome de arquivo."""
+    texto = (texto or "").strip().lower()
+    texto = re.sub(r"\s+", "_", texto)
+    texto = re.sub(r"[^a-z0-9_\-]+", "", texto)
+    return texto[:80] or "busca"
+
+
+def _exportar_xlsx_ptbr(df: pd.DataFrame, caminho_xlsx: Path) -> bool:
+    """
+    Exporta o DataFrame para XLSX aplicando formatação numérica amigável ao padrão brasileiro
+    (a exibição final depende das configurações regionais do Excel/SO, mas o arquivo sai com
+    number_format apropriado para valores numéricos).
+    """
+    try:
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        print("Aviso: openpyxl não está instalado. Para gerar XLSX, execute: pip install openpyxl")
+        return False
+
+    caminho_xlsx.parent.mkdir(parents=True, exist_ok=True)
+
+    with pd.ExcelWriter(caminho_xlsx, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="dados")
+        ws = writer.sheets["dados"]
+
+        headers = [cell.value for cell in ws[1]]
+        header_to_col = {h: idx + 1 for idx, h in enumerate(headers) if h}
+
+        # Formatos numéricos (Excel aplica separadores conforme a localidade)
+        fmt_int = "#,##0"
+        fmt_2 = "#,##0.00"
+        fmt_3 = "#,##0.000"
+
+        cols_int = ["posicao", "pagina", "reviews"]
+        cols_2 = ["preco", "preco_original", "rating", "desconto_percentual"]
+        cols_3 = ["indice_preco", "score_relevancia", "score_visibilidade", "score_qualidade", "score_atratividade"]
+
+        for col in cols_int:
+            if col in header_to_col:
+                c = header_to_col[col]
+                for r in range(2, ws.max_row + 1):
+                    ws.cell(row=r, column=c).number_format = fmt_int
+
+        for col in cols_2:
+            if col in header_to_col:
+                c = header_to_col[col]
+                for r in range(2, ws.max_row + 1):
+                    ws.cell(row=r, column=c).number_format = fmt_2
+
+        for col in cols_3:
+            if col in header_to_col:
+                c = header_to_col[col]
+                for r in range(2, ws.max_row + 1):
+                    ws.cell(row=r, column=c).number_format = fmt_3
+
+        # Largura simples de colunas
+        for idx, h in enumerate(headers, start=1):
+            letter = get_column_letter(idx)
+            base = 18
+            if isinstance(h, str):
+                if len(h) <= 8:
+                    base = 14
+                elif len(h) >= 28:
+                    base = 32
+            ws.column_dimensions[letter].width = base
+
+    return True
+
+
 
 
 def _deduplicar_resultados(resultados: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -58,7 +130,7 @@ def coletar_varias_paginas(
             resposta_json = buscar_google_shopping(
                 q=palavra_chave,
                 page=page,
-                condition=None,  # ou simplesmente remover essa linha
+                condition="new",  # ou simplesmente remover essa linha
             )
         except GoogleShoppingError as e:
             print(f"Erro na página {page}: {e}")
@@ -268,14 +340,31 @@ def main() -> None:
     # Garante que o diretório de saída existe
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    nome_arquivo = f"resultado_google_shopping_{palavra_chave.replace(' ', '_')}.csv"
-    caminho_arquivo = OUTPUT_DIR / nome_arquivo
-
+    # =========================
+    # Saída (padrão executivo)
+    # =========================
+    data_exec = datetime.now().strftime("%Y-%m-%d")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = _slugify(palavra_chave)
+    out_dir = OUTPUT_DIR / "csv" / data_exec
+    out_dir.mkdir(parents=True, exist_ok=True)
+    nome_arquivo = f"GoogleShopping_{slug}_{timestamp}.csv"
+    caminho_arquivo = out_dir / nome_arquivo
     df.to_csv(caminho_arquivo, index=False, encoding="utf-8-sig")
+
+    # =========================
+    # Saída XLSX (padrão executivo)
+    # =========================
+    planilha_dir = OUTPUT_DIR / "planilha" / data_exec
+    planilha_dir.mkdir(parents=True, exist_ok=True)
+    caminho_xlsx = planilha_dir / f"GoogleShopping_{slug}_{timestamp}.xlsx"
+    gerou_xlsx = _exportar_xlsx_ptbr(df, caminho_xlsx)
 
     print(f"\nTotal de itens (raw): {len(resultados)}")
     print(f"Total de itens únicos: {len(df)}")
-    print(f"Arquivo salvo em: {caminho_arquivo}")
+    print(f"CSV salvo em: {caminho_arquivo}")
+    if gerou_xlsx:
+        print(f"XLSX salvo em: {caminho_xlsx}")
 
     # Pequeno resumo de sanity check
     if "score_relevancia" in df.columns:
