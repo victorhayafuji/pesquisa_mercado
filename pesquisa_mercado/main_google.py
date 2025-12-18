@@ -8,6 +8,9 @@ import re
 import pandas as pd
 
 from config import OUTPUT_DIR, N_PAGINAS_DEFAULT
+
+# Saída padronizada para análise (padrão Brasil)
+ANALISE_DIR = OUTPUT_DIR.parent / "outputs_analise"
 from google_shopping_client import buscar_google_shopping, GoogleShoppingError
 from processador_resultados import extrair_resultados_basicos
 from pathlib import Path
@@ -141,6 +144,11 @@ def coletar_varias_paginas(
             resposta_json=resposta_json,
             palavra_chave=palavra_chave,
         )
+
+        # Padronização: garantir 'pagina' nos itens (para bater com Amazon)
+        for r in resultados_pagina:
+            if isinstance(r, dict):
+                r.setdefault("pagina", page)
 
         if not resultados_pagina:
             print(f"Nenhum resultado retornado na página {page}. Encerrando paginação.")
@@ -300,6 +308,123 @@ def _adicionar_metricas_relevancia(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# =========================
+# Saída padronizada (Diretoria / Análises)
+# =========================
+
+EXEC_COLS_ANALISE = [
+    "origem",
+    "capturado_em",
+    "palavra_chave",
+    "pagina",
+    "posicao",
+    "produto",
+    "marca",
+    "seller",
+    "preco",
+    "preco_original",
+    "desconto_percentual",
+    "rating",
+    "reviews",
+    "patrocinado",
+    "id_item",
+    "link",
+    "indice_preco",
+    "score_relevancia",
+    "score_visibilidade",
+    "score_qualidade",
+    "score_atratividade",
+]
+
+
+def _montar_df_analise(df: pd.DataFrame, *, origem: str, palavra_chave: str) -> pd.DataFrame:
+    """Cria um DataFrame padronizado (mesmo layout para Amazon e Google Shopping)."""
+    if df.empty:
+        return df.copy()
+
+    base = df.copy()
+
+    if "capturado_em" not in base.columns:
+        base["capturado_em"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Marca (prioridade: canonizada -> marca -> vazio)
+    marca = None
+    for c in ("marca_canonica", "marca"):
+        if c in base.columns:
+            marca = base[c]
+            break
+    if marca is None:
+        marca = pd.NA
+
+    # ID do item (Google = product_id)
+    id_item = base["product_id"] if "product_id" in base.columns else pd.NA
+
+    def _col_or_na(col: str):
+        return base[col] if col in base.columns else pd.NA
+
+    out = pd.DataFrame({
+        "origem": origem,
+        "capturado_em": base["capturado_em"],
+        "palavra_chave": base["palavra_chave"] if "palavra_chave" in base.columns else palavra_chave,
+        "pagina": _col_or_na("pagina"),
+        "posicao": _col_or_na("posicao"),
+        "produto": _col_or_na("produto"),
+        "marca": marca,
+        "seller": _col_or_na("seller"),
+        "preco": _col_or_na("preco"),
+        "preco_original": _col_or_na("preco_original"),
+        "desconto_percentual": _col_or_na("desconto_percentual"),
+        "rating": _col_or_na("rating"),
+        "reviews": _col_or_na("reviews"),
+        "patrocinado": _col_or_na("patrocinado"),
+        "id_item": id_item,
+        "link": _col_or_na("link"),
+        "indice_preco": _col_or_na("indice_preco"),
+        "score_relevancia": _col_or_na("score_relevancia"),
+        "score_visibilidade": _col_or_na("score_visibilidade"),
+        "score_qualidade": _col_or_na("score_qualidade"),
+        "score_atratividade": _col_or_na("score_atratividade"),
+    })
+
+    # desconto em % (para leitura executiva). Se vier como fração 0-1, converte para 0-100.
+    if "desconto_percentual" in out.columns:
+        try:
+            s = pd.to_numeric(out["desconto_percentual"], errors="coerce")
+            if s.notna().any() and (s.dropna().max() <= 1.0):
+                out["desconto_percentual"] = (s * 100.0)
+        except Exception:
+            pass
+
+    # Garante ordem e presença das colunas
+    for c in EXEC_COLS_ANALISE:
+        if c not in out.columns:
+            out[c] = pd.NA
+    out = out[EXEC_COLS_ANALISE]
+
+    # Tipagem numérica
+    num_cols = [
+        "pagina", "posicao", "preco", "preco_original", "desconto_percentual",
+        "rating", "reviews", "indice_preco",
+        "score_relevancia", "score_visibilidade", "score_qualidade", "score_atratividade",
+    ]
+    for c in num_cols:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce")
+
+    return out
+
+
+def _exportar_csv_analise(df_analise: pd.DataFrame, *, origem: str, slug: str, timestamp: str) -> Path:
+    """Exporta CSV PT-BR: separador ';' e decimal ',' (bom para Excel no Brasil)."""
+    data_exec = datetime.now().strftime("%Y-%m-%d")
+    out_dir = ANALISE_DIR / "csv" / data_exec
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    caminho = out_dir / f"Analise_{origem}_{slug}_{timestamp}.csv"
+    df_analise.to_csv(caminho, index=False, sep=";", decimal=",", encoding="utf-8-sig")
+    return caminho
+
+
 def main() -> None:
     print("=== Pesquisa de Mercado - Google Shopping (SearchAPI) ===")
     palavra_chave = input("Digite o produto a ser pesquisado (ex.: 'mop spray', 'jogo de panelas'): ").strip()
@@ -351,6 +476,11 @@ def main() -> None:
     nome_arquivo = f"GoogleShopping_{slug}_{timestamp}.csv"
     caminho_arquivo = out_dir / nome_arquivo
     df.to_csv(caminho_arquivo, index=False, encoding="utf-8-sig")
+
+    # Saída padronizada para análises (Diretoria) — PT-BR (;) e decimal (,)
+    df_analise = _montar_df_analise(df, origem="GoogleShopping", palavra_chave=palavra_chave)
+    out_csv_analise = _exportar_csv_analise(df_analise, origem="GoogleShopping", slug=slug, timestamp=timestamp)
+    print(f"Arquivo (padronizado p/ análise): {out_csv_analise}")
 
     # Pequeno resumo de sanity check
     if "score_relevancia" in df.columns:
