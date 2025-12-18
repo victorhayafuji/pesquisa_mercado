@@ -352,20 +352,6 @@ def main() -> None:
     caminho_arquivo = out_dir / nome_arquivo
     df.to_csv(caminho_arquivo, index=False, encoding="utf-8-sig")
 
-    # =========================
-    # Saída XLSX (padrão executivo)
-    # =========================
-    planilha_dir = OUTPUT_DIR / "planilha" / data_exec
-    planilha_dir.mkdir(parents=True, exist_ok=True)
-    caminho_xlsx = planilha_dir / f"GoogleShopping_{slug}_{timestamp}.xlsx"
-    gerou_xlsx = _exportar_xlsx_ptbr(df, caminho_xlsx)
-
-    print(f"\nTotal de itens (raw): {len(resultados)}")
-    print(f"Total de itens únicos: {len(df)}")
-    print(f"CSV salvo em: {caminho_arquivo}")
-    if gerou_xlsx:
-        print(f"XLSX salvo em: {caminho_xlsx}")
-
     # Pequeno resumo de sanity check
     if "score_relevancia" in df.columns:
         print("\nTop 5 produtos por score de relevância:")
