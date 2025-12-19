@@ -48,7 +48,7 @@ except ValueError:
 
 # Número padrão de páginas a buscar no Google Shopping
 # Ex.: 4 páginas x 40 resultados ≈ até 160 itens (se o Google devolver tudo)
-N_PAGINAS_DEFAULT = 4
+N_PAGINAS_DEFAULT = 3
 
 # Pausa (em segundos) entre requisições à API.
 # Use 0 para não pausar.

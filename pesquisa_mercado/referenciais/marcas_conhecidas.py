@@ -11,6 +11,7 @@ MARCAS_KNOWN = [
     "123UTIL",
     "3M",
     "AKORA",
+    "ALKLIN"
     "ALLMIX",
     "krystalmix",
     "ARTHI",
@@ -71,6 +72,9 @@ MARCAS_KNOWN = [
     "LECRUSISET",
     "LEHAVI",
     "LYOR",
+    "LIMPPANO",
+    "3M",
+    "SAIF",
     "MACASSAB",
     "MAXWELL"
     "MARPAL",
@@ -115,6 +119,7 @@ MARCAS_KNOWN = [
     "SAK'ES",
     "SCOTH BRITE",
     "SCOTHBRITE",
+    "SCOTH-BRITE",
     "SENSEA",
     "SIGMA",
     "SIMPLO",
