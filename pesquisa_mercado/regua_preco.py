@@ -774,7 +774,7 @@ else:
         st.subheader("Base Tratada")
         st.caption("Visão executiva: colunas-chave para leitura em reunião.")
         st.dataframe(
-        df_tratado_view_display.head(200),
+        df_tratado_view_display,
         use_container_width=True,
         column_config={
             "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
@@ -788,7 +788,7 @@ else:
         if len(df_removidos) == 0:
             st.success("Nenhuma linha removida nesta execução.")
         else:
-            st.dataframe(df_removidos.head(200), use_container_width=True)
+            st.dataframe(df_removidos, use_container_width=True)
 
     with tab_regua:
         st.subheader("Régua de Preço")
