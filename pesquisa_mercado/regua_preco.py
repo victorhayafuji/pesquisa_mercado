@@ -56,58 +56,48 @@ def parse_price_to_float(value: str) -> float:
         return np.nan
 
 
-def parse_decimal_to_float(value: str) -> float:
-    """Converte strings numéricas (ex.: '4,7', '1.234,56') para float. Usado só para análise/visualização."""
-    if value is None:
-        return np.nan
-    txt = str(value).strip()
-    if txt == "":
-        return np.nan
+def winsorize(x: np.ndarray, p_low: float = 1, p_high: float = 99) -> tuple[np.ndarray, dict]:
+    """Winsoriza (corta) extremos em percentis. Não remove linhas; apenas limita valores para o cálculo."""
+    lo, hi = np.percentile(x, [p_low, p_high])
+    xw = np.clip(x, lo, hi)
+    meta = {
+        "metodo": f"Winsor P{int(p_low)}/P{int(p_high)}",
+        "lim_inf": float(lo),
+        "lim_sup": float(hi),
+        "outliers": int(np.sum((x < lo) | (x > hi))),
+    }
+    return xw, meta
 
-    txt = re.sub(r"[^\d,.\-]", "", txt)
+def iqr_filter(x: np.ndarray, k: float = 1.5) -> tuple[np.ndarray, dict]:
+    """Remove outliers pelo critério IQR (Tukey)."""
+    q1, q3 = np.percentile(x, [25, 75])
+    iqr = q3 - q1
+    lo, hi = q1 - k * iqr, q3 + k * iqr
+    mask = (x >= lo) & (x <= hi)
+    meta = {
+        "metodo": f"IQR {k}x",
+        "lim_inf": float(lo),
+        "lim_sup": float(hi),
+        "outliers": int(np.sum(~mask)),
+    }
+    return x[mask], meta
 
-    # BR: 1.234,56
-    if txt.count(",") == 1 and txt.count(".") >= 1:
-        txt = txt.replace(".", "").replace(",", ".")
-    else:
-        # 123,45
-        if txt.count(",") == 1 and txt.count(".") == 0:
-            txt = txt.replace(",", ".")
-        # 1.234.567
-        if txt.count(".") > 1 and txt.count(",") == 0:
-            txt = txt.replace(".", "")
+def mad_filter(x: np.ndarray, z: float = 3.5) -> tuple[np.ndarray, dict]:
+    """Remove outliers via MAD (Median Absolute Deviation), robusto a caudas longas."""
+    med = float(np.median(x))
+    mad = float(np.median(np.abs(x - med)))
+    if mad == 0:
+        return x, {"metodo": f"MAD z={z}", "lim_inf": np.nan, "lim_sup": np.nan, "outliers": 0}
 
-    try:
-        return float(txt)
-    except ValueError:
-        return np.nan
-
-def parse_int_to_int(value: str):
-    """Converte strings inteiras (ex.: '1.234', '1,234', '1234') para int. Usado só para análise/visualização."""
-    if value is None:
-        return np.nan
-    txt = str(value).strip()
-    if txt == "":
-        return np.nan
-
-    txt = re.sub(r"[^\d\-]", "", txt)
-    if txt in ("", "-"):
-        return np.nan
-
-    try:
-        return int(txt)
-    except ValueError:
-        return np.nan
+    # robust z-score
+    rz = 0.6745 * (x - med) / mad
+    mask = np.abs(rz) <= z
+    meta = {"metodo": f"MAD z={z}", "lim_inf": np.nan, "lim_sup": np.nan, "outliers": int(np.sum(~mask))}
+    return x[mask], meta
 
 
-def df_to_csv_bytes(df: pd.DataFrame, sep=";", encoding="utf-8-sig", decimal=None, float_format=None) -> bytes:
-    """Exporta DataFrame para CSV (bytes). Usar `decimal=','` para melhorar leitura no Excel PT-BR quando sep=';'."""
-    kwargs = {"index": False, "sep": sep}
-    if decimal is not None:
-        kwargs["decimal"] = decimal
-    if float_format is not None:
-        kwargs["float_format"] = float_format
-    return df.to_csv(**kwargs).encode(encoding)
+def df_to_csv_bytes(df: pd.DataFrame, sep=";", encoding="utf-8-sig") -> bytes:
+    return df.to_csv(index=False, sep=sep).encode(encoding)
 
 def brl(v: float) -> str:
     if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -325,7 +315,15 @@ def clean_df(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
 # =========================
 # Régua (em cima do tratado)
 # =========================
-def build_regua(df_tratado: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def build_regua(df_tratado: pd.DataFrame, outlier_mode: str = "Winsor P1/P99") -> tuple[pd.DataFrame, dict]:
+    """
+    Calcula a régua de preço em cima da BASE TRATADA.
+
+    Governança:
+    - NÃO altera o df_tratado.
+    - Tratamento de outliers é aplicado SOMENTE no cálculo da régua (p_calc).
+    """
+
     if "preco" not in df_tratado.columns:
         raise ValueError("Coluna 'preco' não encontrada.")
 
@@ -342,17 +340,51 @@ def build_regua(df_tratado: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         grouped = [("(geral)", df_valid)]
 
     rows = []
+    outliers_total = 0
+
     for key, g in grouped:
         p = g["_preco_num"].to_numpy(dtype=float)
         if len(p) == 0:
             continue
 
-        mn = float(np.min(p))
-        md = float(np.mean(p))
-        mx = float(np.max(p))
+        # ------------------------------
+        # Outliers (somente para cálculo)
+        # ------------------------------
+        p_calc = p
+        meta_out = {"metodo": "Nenhum", "outliers": 0, "lim_inf": np.nan, "lim_sup": np.nan}
+
+        # Governança: não tratar outliers se amostra pequena
+        if len(p) >= 30:
+            if outlier_mode == "Winsor P1/P99":
+                p_calc, meta_out = winsorize(p, 1, 99)
+            elif outlier_mode == "IQR 1.5x":
+                p_calc, meta_out = iqr_filter(p, 1.5)
+            elif outlier_mode == "IQR 3.0x":
+                p_calc, meta_out = iqr_filter(p, 3.0)
+            elif outlier_mode == "MAD z=3.5":
+                p_calc, meta_out = mad_filter(p, 3.5)
+            else:
+                p_calc = p
+                meta_out = {"metodo": "Nenhum", "outliers": 0, "lim_inf": np.nan, "lim_sup": np.nan}
+
+            # Segurança: se o filtro removeu demais, recua
+            if meta_out["metodo"].startswith("IQR") or meta_out["metodo"].startswith("MAD"):
+                if len(p_calc) < max(10, int(0.60 * len(p))):
+                    p_calc = p
+                    meta_out = {"metodo": "Recuo (segurança)", "outliers": 0, "lim_inf": np.nan, "lim_sup": np.nan}
+
+        outliers_total += int(meta_out.get("outliers", 0))
+
+        # ------------------------------
+        # Cálculo da régua (p_calc)
+        # ------------------------------
+        mn = float(np.min(p_calc))
+        md = float(np.mean(p_calc))
+        mx = float(np.max(p_calc))
+
         p33, p67 = (np.nan, np.nan)
-        if len(p) >= 2:
-            p33, p67 = np.percentile(p, [33, 67])
+        if len(p_calc) >= 2:
+            p33, p67 = np.percentile(p_calc, [33, 67])
 
         rows.append({
             "palavra_chave": key,
@@ -366,6 +398,8 @@ def build_regua(df_tratado: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             "faixa_media": f"{brl(p33)} até {brl(p67)}" if not np.isnan(p33) and not np.isnan(p67) else "",
             "faixa_premium": f"acima de {brl(p67)}" if not np.isnan(p67) else "",
             "amostra_pequena": "sim" if len(p) < 30 else "nao",
+            "metodo_outlier": meta_out.get("metodo", "Nenhum"),
+            "outliers_mitigados": int(meta_out.get("outliers", 0)),
         })
 
     regua = pd.DataFrame(rows).sort_values("palavra_chave")
@@ -375,6 +409,8 @@ def build_regua(df_tratado: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "precos_validos": int(valid.sum()),
         "precos_invalidos": int((~valid).sum()),
         "segmentado": bool(has_kw),
+        "metodo_outlier": outlier_mode,
+        "outliers_mitigados_total": int(outliers_total),
     }
     return regua, meta
 
@@ -392,6 +428,14 @@ with st.sidebar:
     sep_in_opt = st.selectbox("Separador do arquivo", ["Auto", ";", ","], index=0)
     sep_out = st.selectbox("Separador de exportação", [";", ","], index=0)
     aplicar_limpeza = st.checkbox("Aplicar limpeza antes da régua", value=True)
+
+    st.subheader("Régua (robustez)")
+    outlier_mode = st.selectbox(
+        "Tratamento de outliers (apenas no cálculo da régua)",
+        ["Nenhum", "Winsor P1/P99", "IQR 1.5x", "IQR 3.0x", "MAD z=3.5"],
+        index=1,
+        help="Não altera a base tratada. Afeta somente os cálculos da régua."
+    )
 
     st.subheader("Exibição")
     modo_apresentacao = st.toggle("Modo apresentação", value=False)
@@ -437,27 +481,7 @@ BASE_TRATADA_RENAME = {
 cols_existentes = [c for c in BASE_TRATADA_COLS if c in df_tratado.columns]
 df_tratado_view = df_tratado[cols_existentes].rename(columns=BASE_TRATADA_RENAME)
 
-# --------------------------------------------------
-# VIEW (apenas visualização): tipar colunas numéricas
-# Não altera o CSV exportado (df_tratado permanece str)
-# --------------------------------------------------
-df_tratado_view_display = df_tratado_view.copy()
-
-if "Preço" in df_tratado_view_display.columns and "preco" in df_tratado.columns:
-    df_tratado_view_display["Preço"] = df_tratado["preco"].map(parse_price_to_float)
-
-if "Rating" in df_tratado_view_display.columns and "rating" in df_tratado.columns:
-    df_tratado_view_display["Rating"] = df_tratado["rating"].map(parse_decimal_to_float)
-
-if "Qtd. Reviews" in df_tratado_view_display.columns and "reviews" in df_tratado.columns:
-    df_tratado_view_display["Qtd. Reviews"] = pd.Series(df_tratado["reviews"].map(parse_int_to_int)).astype("Int64")
-
-if "Data" in df_tratado_view_display.columns and "capturado_em" in df_tratado.columns:
-    dt = pd.to_datetime(df_tratado["capturado_em"], errors="coerce", dayfirst=True)
-    if dt.notna().any():
-        df_tratado_view_display["Data"] = dt
-
-regua, meta_regua = build_regua(df_tratado)
+regua, meta_regua = build_regua(df_tratado, outlier_mode=outlier_mode)
 regua_exec = regua[["palavra_chave", "faixa_economica", "faixa_media", "faixa_premium"]].copy()
 
 # Métricas rápidas (topo)
@@ -497,6 +521,7 @@ if modo_apresentacao:
     with top_right:
         st.subheader("Régua de Preço")
         st.caption("Visão enxuta: somente faixas Econômica / Média / Premium.")
+        st.caption(f"Método de outliers (régua): {meta_regua.get('metodo_outlier', outlier_mode)} | Outliers mitigados (total): {meta_regua.get('outliers_mitigados_total', 0)}")
         st.dataframe(regua_exec, use_container_width=True, height=560)
 
     st.divider()
@@ -522,7 +547,7 @@ if modo_apresentacao:
     with d3:
         st.download_button(
             "Baixar Régua",
-            data=df_to_csv_bytes(regua, sep=sep_out, decimal=("," if sep_out == ";" else ".")),
+            data=df_to_csv_bytes(regua, sep=sep_out),
             file_name=f"{uploaded.name.replace('.csv','')}_regua_preco.csv",
             mime="text/csv",
             use_container_width=True
@@ -764,7 +789,7 @@ else:
         with d3:
             st.download_button(
                 "Baixar Régua",
-                data=df_to_csv_bytes(regua, sep=sep_out, decimal=("," if sep_out == ";" else ".")),
+                data=df_to_csv_bytes(regua, sep=sep_out),
                 file_name=f"{uploaded.name.replace('.csv','')}_regua_preco.csv",
                 mime="text/csv",
                 use_container_width=True
@@ -773,24 +798,17 @@ else:
     with tab_tratado:
         st.subheader("Base Tratada")
         st.caption("Visão executiva: colunas-chave para leitura em reunião.")
-        st.dataframe(
-        df_tratado_view_display,
-        use_container_width=True,
-        column_config={
-            "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
-            "Rating": st.column_config.NumberColumn("Rating", format="%.2f"),
-            "Qtd. Reviews": st.column_config.NumberColumn("Qtd. Reviews", format="%d"),
-        },
-    )
+        st.dataframe(df_tratado_view.head(200), use_container_width=True)
 
     with tab_removidos:
         st.subheader("Removidos")
         if len(df_removidos) == 0:
             st.success("Nenhuma linha removida nesta execução.")
         else:
-            st.dataframe(df_removidos, use_container_width=True)
+            st.dataframe(df_removidos.head(200), use_container_width=True)
 
     with tab_regua:
         st.subheader("Régua de Preço")
         st.caption("Visão enxuta: somente faixas Econômica / Média / Premium.")
+        st.caption(f"Método de outliers (régua): {meta_regua.get('metodo_outlier', outlier_mode)} | Outliers mitigados (total): {meta_regua.get('outliers_mitigados_total', 0)}")
         st.dataframe(regua_exec, use_container_width=True)
