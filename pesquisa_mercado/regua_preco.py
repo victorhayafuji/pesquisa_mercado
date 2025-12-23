@@ -5,6 +5,7 @@ import re
 from io import BytesIO
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 # =========================
 # Config (executivo)
@@ -54,8 +55,59 @@ def parse_price_to_float(value: str) -> float:
     except ValueError:
         return np.nan
 
-def df_to_csv_bytes(df: pd.DataFrame, sep=";", encoding="utf-8-sig") -> bytes:
-    return df.to_csv(index=False, sep=sep).encode(encoding)
+
+def parse_decimal_to_float(value: str) -> float:
+    """Converte strings numéricas (ex.: '4,7', '1.234,56') para float. Usado só para análise/visualização."""
+    if value is None:
+        return np.nan
+    txt = str(value).strip()
+    if txt == "":
+        return np.nan
+
+    txt = re.sub(r"[^\d,.\-]", "", txt)
+
+    # BR: 1.234,56
+    if txt.count(",") == 1 and txt.count(".") >= 1:
+        txt = txt.replace(".", "").replace(",", ".")
+    else:
+        # 123,45
+        if txt.count(",") == 1 and txt.count(".") == 0:
+            txt = txt.replace(",", ".")
+        # 1.234.567
+        if txt.count(".") > 1 and txt.count(",") == 0:
+            txt = txt.replace(".", "")
+
+    try:
+        return float(txt)
+    except ValueError:
+        return np.nan
+
+def parse_int_to_int(value: str):
+    """Converte strings inteiras (ex.: '1.234', '1,234', '1234') para int. Usado só para análise/visualização."""
+    if value is None:
+        return np.nan
+    txt = str(value).strip()
+    if txt == "":
+        return np.nan
+
+    txt = re.sub(r"[^\d\-]", "", txt)
+    if txt in ("", "-"):
+        return np.nan
+
+    try:
+        return int(txt)
+    except ValueError:
+        return np.nan
+
+
+def df_to_csv_bytes(df: pd.DataFrame, sep=";", encoding="utf-8-sig", decimal=None, float_format=None) -> bytes:
+    """Exporta DataFrame para CSV (bytes). Usar `decimal=','` para melhorar leitura no Excel PT-BR quando sep=';'."""
+    kwargs = {"index": False, "sep": sep}
+    if decimal is not None:
+        kwargs["decimal"] = decimal
+    if float_format is not None:
+        kwargs["float_format"] = float_format
+    return df.to_csv(**kwargs).encode(encoding)
 
 def brl(v: float) -> str:
     if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -310,9 +362,9 @@ def build_regua(df_tratado: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             "preco_max": mx,
             "corte_P33": float(p33) if not np.isnan(p33) else np.nan,
             "corte_P67": float(p67) if not np.isnan(p67) else np.nan,
-            "faixa_economica": f"{mn:.2f} até {p33:.2f}" if not np.isnan(p33) else "",
-            "faixa_media": f"{p33:.2f} até {p67:.2f}" if not np.isnan(p33) and not np.isnan(p67) else "",
-            "faixa_premium": f"acima de {p67:.2f}" if not np.isnan(p67) else "",
+            "faixa_economica": f"{brl(mn)} até {brl(p33)}" if not np.isnan(p33) else "",
+            "faixa_media": f"{brl(p33)} até {brl(p67)}" if not np.isnan(p33) and not np.isnan(p67) else "",
+            "faixa_premium": f"acima de {brl(p67)}" if not np.isnan(p67) else "",
             "amostra_pequena": "sim" if len(p) < 30 else "nao",
         })
 
@@ -340,6 +392,9 @@ with st.sidebar:
     sep_in_opt = st.selectbox("Separador do arquivo", ["Auto", ";", ","], index=0)
     sep_out = st.selectbox("Separador de exportação", [";", ","], index=0)
     aplicar_limpeza = st.checkbox("Aplicar limpeza antes da régua", value=True)
+
+    st.subheader("Exibição")
+    modo_apresentacao = st.toggle("Modo apresentação", value=False)
 
 if not uploaded:
     st.info("Anexe um CSV no menu lateral para iniciar.")
@@ -382,6 +437,26 @@ BASE_TRATADA_RENAME = {
 cols_existentes = [c for c in BASE_TRATADA_COLS if c in df_tratado.columns]
 df_tratado_view = df_tratado[cols_existentes].rename(columns=BASE_TRATADA_RENAME)
 
+# --------------------------------------------------
+# VIEW (apenas visualização): tipar colunas numéricas
+# Não altera o CSV exportado (df_tratado permanece str)
+# --------------------------------------------------
+df_tratado_view_display = df_tratado_view.copy()
+
+if "Preço" in df_tratado_view_display.columns and "preco" in df_tratado.columns:
+    df_tratado_view_display["Preço"] = df_tratado["preco"].map(parse_price_to_float)
+
+if "Rating" in df_tratado_view_display.columns and "rating" in df_tratado.columns:
+    df_tratado_view_display["Rating"] = df_tratado["rating"].map(parse_decimal_to_float)
+
+if "Qtd. Reviews" in df_tratado_view_display.columns and "reviews" in df_tratado.columns:
+    df_tratado_view_display["Qtd. Reviews"] = pd.Series(df_tratado["reviews"].map(parse_int_to_int)).astype("Int64")
+
+if "Data" in df_tratado_view_display.columns and "capturado_em" in df_tratado.columns:
+    dt = pd.to_datetime(df_tratado["capturado_em"], errors="coerce", dayfirst=True)
+    if dt.notna().any():
+        df_tratado_view_display["Data"] = dt
+
 regua, meta_regua = build_regua(df_tratado)
 regua_exec = regua[["palavra_chave", "faixa_economica", "faixa_media", "faixa_premium"]].copy()
 
@@ -395,217 +470,39 @@ k4.metric("Preços válidos", f"{meta_regua['precos_validos']}")
 st.divider()
 
 # =========================
-# MODO NORMAL
+# MODO APRESENTAÇÃO
 # =========================
-tab_visao, tab_tratado, tab_removidos, tab_regua = st.tabs(
-    ["Visão Geral", "Base Tratada", "Removidos", "Régua de Preço"]
-)
+if modo_apresentacao:
+    top_left, top_right = st.columns([1.05, 1.35])
 
-with tab_visao:
-    st.subheader("Visão Geral")
+    with top_left:
+        st.subheader("Resumo")
+        if "palavra_chave" in df.columns:
+            vol = df["palavra_chave"].replace("", "(vazio)").value_counts().reset_index()
+            vol.columns = ["palavra_chave", "linhas"]
+            st.caption("Volume por palavra-chave")
+            st.dataframe(vol, use_container_width=True, height=320)
 
-    total_original = meta_clean["linhas_original"]
-    total_tratado = meta_clean["linhas_tratado"]
-    total_remov = meta_clean["linhas_removidos"]
-    pct_remov = (total_remov / total_original * 100) if total_original else 0
+        if meta_clean.get("observacao"):
+            st.caption(meta_clean["observacao"])
 
-    has_kw = "palavra_chave" in df_tratado.columns
-    has_seller = "seller" in df_tratado.columns
-    has_brand = "marca" in df_tratado.columns
-    has_price = "preco" in df_tratado.columns
+        if meta_clean["top_motivos"]:
+            motivos_df = pd.DataFrame(
+                [{"motivo": k, "qtd": v} for k, v in meta_clean["top_motivos"].items()]
+            ).sort_values("qtd", ascending=False)
 
-    if has_price:
-        pnum = df_tratado["preco"].map(parse_price_to_float)
-        p_valid = pnum.dropna()
-        med = float(p_valid.median()) if len(p_valid) else np.nan
-        p25 = float(p_valid.quantile(0.25)) if len(p_valid) else np.nan
-        p75 = float(p_valid.quantile(0.75)) if len(p_valid) else np.nan
-    else:
-        p_valid = pd.Series([], dtype=float)
-        med = p25 = p75 = np.nan
+            st.caption("Motivos de remoção (top)")
+            st.dataframe(motivos_df, use_container_width=True, height=220)
 
-    # ==========================================================
-    # NOVO: PAINEL EXECUTIVO (visão de decisão)
-    # ==========================================================
-    st.markdown("**Painel Executivo (visão de decisão)**")
-
-    treated = int(total_tratado) if total_tratado else 0
-
-    preco_validos = int(meta_regua.get("precos_validos", 0))
-    preco_invalidos = int(meta_regua.get("precos_invalidos", 0))
-    pct_preco_valido = (preco_validos / treated * 100) if treated else 0.0
-
-    def pct_preenchido(col: str) -> float:
-        if col not in df_tratado.columns or treated == 0:
-            return np.nan
-        s = df_tratado[col].astype(str).str.strip()
-        return float((s != "").mean() * 100)
-
-    pct_link = pct_preenchido("link")
-    pct_marca = pct_preenchido("marca")
-    pct_loja = pct_preenchido("seller")
-
-    periodo_txt = "-"
-    if "capturado_em" in df_tratado.columns:
-        dt = pd.to_datetime(df_tratado["capturado_em"], errors="coerce", dayfirst=True)
-        dt = dt.dropna()
-        if len(dt):
-            dmin, dmax = dt.min(), dt.max()
-            if dmin.date() == dmax.date():
-                periodo_txt = dmin.strftime("%d/%m/%Y")
-            else:
-                periodo_txt = f"{dmin.strftime('%d/%m')}–{dmax.strftime('%d/%m/%Y')}"
-
-    top3_share = np.nan
-    top1_share = np.nan
-    n80 = np.nan
-    lojas_unicas = np.nan
-
-    if has_seller and treated > 0:
-        vc = df_tratado["seller"].replace("", "(vazio)").value_counts()
-        base = int(vc.sum()) if int(vc.sum()) > 0 else 1
-
-        lojas_unicas = int(
-            df_tratado["seller"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
-        )
-
-        top1_share = float((int(vc.head(1).sum()) / base) * 100) if len(vc) else 0.0
-        top3_share = float((int(vc.head(3).sum()) / base) * 100) if len(vc) else 0.0
-
-        cum = (vc.cumsum() / base)
-        n80 = int((cum <= 0.80).sum() + 1) if len(cum) else np.nan
-
-    iqr = np.nan
-    outlier_pct = np.nan
-    outlier_qtd = 0
-
-    if has_price and len(p_valid) >= 10:
-        iqr = float(p75 - p25) if (not np.isnan(p75) and not np.isnan(p25)) else np.nan
-        if not np.isnan(iqr):
-            low = float(p25 - 1.5 * iqr)
-            high = float(p75 + 1.5 * iqr)
-            out = (p_valid < low) | (p_valid > high)
-            outlier_qtd = int(out.sum())
-            outlier_pct = float(outlier_qtd / len(p_valid) * 100) if len(p_valid) else np.nan
-
-    st.caption("Qualidade da Base")
-    q1, q2, q3, q4 = st.columns(4)
-    q1.metric("Base comparável", f"{treated}", f"{pct_remov:.1f}% removida" if total_original else None)
-    q2.metric("Cobertura de preço", f"{pct_preco_valido:.0f}%", f"{preco_invalidos} sem preço" if preco_invalidos else "OK")
-    q3.metric("Período capturado", periodo_txt)
-
-    if not np.isnan(pct_link):
-        q4.metric("Links preenchidos", f"{pct_link:.0f}%", "OK" if pct_link >= 85 else "Atenção")
-    elif not np.isnan(pct_marca):
-        q4.metric("Marcas preenchidas", f"{pct_marca:.0f}%", "OK" if pct_marca >= 85 else "Atenção")
-    else:
-        q4.metric("Atributos chave", "-", "Verificar colunas")
-
-    st.caption("Concentração de Canal")
-    c1, c2, c3, c4 = st.columns(4)
-    if not np.isnan(top1_share):
-        c1.metric("Top 1 loja (share)", f"{top1_share:.1f}%")
-    else:
-        c1.metric("Top 1 loja (share)", "-", "Sem seller")
-
-    if not np.isnan(top3_share):
-        c2.metric("Top 3 lojas (share)", f"{top3_share:.1f}%", "Risco" if top3_share >= 50 else "Saudável")
-    else:
-        c2.metric("Top 3 lojas (share)", "-", "Sem seller")
-
-    if not np.isnan(n80):
-        c3.metric("Lojas p/ 80% do volume", f"{n80}")
-    else:
-        c3.metric("Lojas p/ 80% do volume", "-", "Sem seller")
-
-    if not np.isnan(lojas_unicas):
-        c4.metric("Lojas únicas", f"{lojas_unicas}")
-    else:
-        c4.metric("Lojas únicas", "-", "Sem seller")
-
-    st.caption("Sinais de Preço")
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Ticket mediano", brl(med))
-    p2.metric("Dispersão (IQR)", brl(iqr) if not np.isnan(iqr) else "-", "P75–P25")
-    if not np.isnan(outlier_pct):
-        p3.metric("Outliers de preço", f"{outlier_pct:.1f}%", f"{outlier_qtd} itens")
-    else:
-        p3.metric("Outliers de preço", "-", "Amostra pequena")
-
-    alertas = []
-    if treated and pct_preco_valido < 90:
-        alertas.append("A cobertura de preço numérico está abaixo do ideal. A régua pode ficar instável.")
-    if not np.isnan(pct_link) and pct_link < 80:
-        alertas.append("Baixa cobertura de link. Dificulta auditoria e remoção de duplicidade por URL.")
-    if not np.isnan(top3_share) and top3_share >= 50:
-        alertas.append("Alta concentração em poucas lojas. A régua pode refletir mais o marketplace dominante do que o mercado.")
-    if not np.isnan(outlier_pct) and outlier_pct >= 5:
-        alertas.append("Cauda de outliers relevante. Provável mistura de kits/multipacks e itens fora do padrão.")
-
-    if alertas:
-        st.warning("**Alertas executivos:** " + " ".join([f"• {a}" for a in alertas]))
-    else:
-        st.success("Base com qualidade e concentração dentro do esperado para leitura executiva.")
+    with top_right:
+        st.subheader("Régua de Preço")
+        st.caption("Visão enxuta: somente faixas Econômica / Média / Premium.")
+        st.dataframe(regua_exec, use_container_width=True, height=560)
 
     st.divider()
-
-    # =========================
-    # Tabelas rápidas (apoio)
-    # =========================
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-
-    with col1:
-        st.markdown("**Top Palavras-chave (Tratado)**")
-        if has_kw:
-            top_kw = (
-                df_tratado["palavra_chave"]
-                .replace("", "(vazio)")
-                .value_counts()
-                .head(10)
-                .reset_index()
-            )
-            top_kw.columns = ["Palavra-chave", "Linhas"]
-            st.dataframe(top_kw, use_container_width=True, height=320)
-        else:
-            st.caption("Coluna 'palavra_chave' não encontrada.")
-
-    with col2:
-        st.markdown("**Top Lojas (Pareto — Tratado)**")
-        if has_seller:
-            vc = df_tratado["seller"].replace("", "(vazio)").value_counts()
-            base = int(vc.sum()) if int(vc.sum()) > 0 else 1
-
-            pareto = vc.head(12).reset_index()
-            pareto.columns = ["Loja", "Linhas"]
-            pareto["Linhas"] = pd.to_numeric(pareto["Linhas"], errors="coerce").fillna(0).astype(int)
-
-            pareto["% Base"] = (pareto["Linhas"] / base * 100).round(1)
-            pareto["% Acumulado"] = pareto["% Base"].cumsum().round(1)
-
-            st.dataframe(pareto, use_container_width=True, height=320)
-        else:
-            st.caption("Coluna 'seller' não encontrada.")
-
-    with col3:
-        st.markdown("**Top Marcas (Tratado)**")
-        if has_brand:
-            top_brand = (
-                df_tratado["marca"]
-                .replace("", "(vazio)")
-                .value_counts()
-                .head(10)
-                .reset_index()
-            )
-            top_brand.columns = ["Marca", "Linhas"]
-            st.dataframe(top_brand, use_container_width=True, height=320)
-        else:
-            st.caption("Coluna 'marca' não encontrada.")
-
-    st.divider()
-
     st.subheader("Downloads (CSV)")
-    d1, d2, d3 = st.columns([1, 1, 1])
 
+    d1, d2, d3 = st.columns([1, 1, 1])
     with d1:
         st.download_button(
             "Baixar Tratado",
@@ -625,25 +522,275 @@ with tab_visao:
     with d3:
         st.download_button(
             "Baixar Régua",
-            data=df_to_csv_bytes(regua, sep=sep_out),
+            data=df_to_csv_bytes(regua, sep=sep_out, decimal=("," if sep_out == ";" else ".")),
             file_name=f"{uploaded.name.replace('.csv','')}_regua_preco.csv",
             mime="text/csv",
             use_container_width=True
         )
 
-with tab_tratado:
-    st.subheader("Base Tratada")
-    st.caption("Visão executiva: colunas-chave para leitura em reunião.")
-    st.dataframe(df_tratado_view.head(200), use_container_width=True)
+    with st.expander("Auditoria (opcional)", expanded=False):
+        st.caption("Preview do CSV original")
+        st.dataframe(df.head(30), use_container_width=True)
 
-with tab_removidos:
-    st.subheader("Removidos")
-    if len(df_removidos) == 0:
-        st.success("Nenhuma linha removida nesta execução.")
-    else:
-        st.dataframe(df_removidos.head(200), use_container_width=True)
+# =========================
+# MODO NORMAL
+# =========================
+else:
+    tab_visao, tab_tratado, tab_removidos, tab_regua = st.tabs(
+        ["Visão Geral", "Base Tratada", "Removidos", "Régua de Preço"]
+    )
 
-with tab_regua:
-    st.subheader("Régua de Preço")
-    st.caption("Visão enxuta: somente faixas Econômica / Média / Premium.")
-    st.dataframe(regua_exec, use_container_width=True)
+    with tab_visao:
+        st.subheader("Visão Geral")
+
+        total_original = meta_clean["linhas_original"]
+        total_tratado = meta_clean["linhas_tratado"]
+        total_remov = meta_clean["linhas_removidos"]
+        pct_remov = (total_remov / total_original * 100) if total_original else 0
+
+        has_kw = "palavra_chave" in df_tratado.columns
+        has_seller = "seller" in df_tratado.columns
+        has_brand = "marca" in df_tratado.columns
+        has_price = "preco" in df_tratado.columns
+
+        if has_price:
+            pnum = df_tratado["preco"].map(parse_price_to_float)
+            p_valid = pnum.dropna()
+            med = float(p_valid.median()) if len(p_valid) else np.nan
+            p25 = float(p_valid.quantile(0.25)) if len(p_valid) else np.nan
+            p75 = float(p_valid.quantile(0.75)) if len(p_valid) else np.nan
+        else:
+            p_valid = pd.Series([], dtype=float)
+            med = p25 = p75 = np.nan
+
+        # ==========================================================
+        # NOVO: PAINEL EXECUTIVO (visão de decisão)
+        # ==========================================================
+        st.markdown("**Painel Executivo (visão de decisão)**")
+
+        treated = int(total_tratado) if total_tratado else 0
+
+        preco_validos = int(meta_regua.get("precos_validos", 0))
+        preco_invalidos = int(meta_regua.get("precos_invalidos", 0))
+        pct_preco_valido = (preco_validos / treated * 100) if treated else 0.0
+
+        def pct_preenchido(col: str) -> float:
+            if col not in df_tratado.columns or treated == 0:
+                return np.nan
+            s = df_tratado[col].astype(str).str.strip()
+            return float((s != "").mean() * 100)
+
+        pct_link = pct_preenchido("link")
+        pct_marca = pct_preenchido("marca")
+        pct_loja = pct_preenchido("seller")
+
+        periodo_txt = "-"
+        if "capturado_em" in df_tratado.columns:
+            dt = pd.to_datetime(df_tratado["capturado_em"], errors="coerce", dayfirst=True)
+            dt = dt.dropna()
+            if len(dt):
+                dmin, dmax = dt.min(), dt.max()
+                if dmin.date() == dmax.date():
+                    periodo_txt = dmin.strftime("%d/%m/%Y")
+                else:
+                    periodo_txt = f"{dmin.strftime('%d/%m')}–{dmax.strftime('%d/%m/%Y')}"
+
+        top3_share = np.nan
+        top1_share = np.nan
+        n80 = np.nan
+        lojas_unicas = np.nan
+
+        if has_seller and treated > 0:
+            vc = df_tratado["seller"].replace("", "(vazio)").value_counts()
+            base = int(vc.sum()) if int(vc.sum()) > 0 else 1
+
+            lojas_unicas = int(
+                df_tratado["seller"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+            )
+
+            top1_share = float((int(vc.head(1).sum()) / base) * 100) if len(vc) else 0.0
+            top3_share = float((int(vc.head(3).sum()) / base) * 100) if len(vc) else 0.0
+
+            cum = (vc.cumsum() / base)
+            n80 = int((cum <= 0.80).sum() + 1) if len(cum) else np.nan
+
+        iqr = np.nan
+        outlier_pct = np.nan
+        outlier_qtd = 0
+
+        if has_price and len(p_valid) >= 10:
+            iqr = float(p75 - p25) if (not np.isnan(p75) and not np.isnan(p25)) else np.nan
+            if not np.isnan(iqr):
+                low = float(p25 - 1.5 * iqr)
+                high = float(p75 + 1.5 * iqr)
+                out = (p_valid < low) | (p_valid > high)
+                outlier_qtd = int(out.sum())
+                outlier_pct = float(outlier_qtd / len(p_valid) * 100) if len(p_valid) else np.nan
+
+        st.caption("Qualidade da Base")
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric("Base comparável", f"{treated}", f"{pct_remov:.1f}% removida" if total_original else None)
+        q2.metric("Cobertura de preço", f"{pct_preco_valido:.0f}%", f"{preco_invalidos} sem preço" if preco_invalidos else "OK")
+        q3.metric("Período capturado", periodo_txt)
+
+        if not np.isnan(pct_link):
+            q4.metric("Links preenchidos", f"{pct_link:.0f}%", "OK" if pct_link >= 85 else "Atenção")
+        elif not np.isnan(pct_marca):
+            q4.metric("Marcas preenchidas", f"{pct_marca:.0f}%", "OK" if pct_marca >= 85 else "Atenção")
+        else:
+            q4.metric("Atributos chave", "-", "Verificar colunas")
+
+        st.caption("Concentração de Canal")
+        c1, c2, c3, c4 = st.columns(4)
+        if not np.isnan(top1_share):
+            c1.metric("Top 1 loja (share)", f"{top1_share:.1f}%")
+        else:
+            c1.metric("Top 1 loja (share)", "-", "Sem seller")
+
+        if not np.isnan(top3_share):
+            c2.metric("Top 3 lojas (share)", f"{top3_share:.1f}%", "Risco" if top3_share >= 50 else "Saudável")
+        else:
+            c2.metric("Top 3 lojas (share)", "-", "Sem seller")
+
+        if not np.isnan(n80):
+            c3.metric("Lojas p/ 80% do volume", f"{n80}")
+        else:
+            c3.metric("Lojas p/ 80% do volume", "-", "Sem seller")
+
+        if not np.isnan(lojas_unicas):
+            c4.metric("Lojas únicas", f"{lojas_unicas}")
+        else:
+            c4.metric("Lojas únicas", "-", "Sem seller")
+
+        st.caption("Sinais de Preço")
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Ticket mediano", brl(med))
+        p2.metric("Dispersão (IQR)", brl(iqr) if not np.isnan(iqr) else "-", "P75–P25")
+        if not np.isnan(outlier_pct):
+            p3.metric("Outliers de preço", f"{outlier_pct:.1f}%", f"{outlier_qtd} itens")
+        else:
+            p3.metric("Outliers de preço", "-", "Amostra pequena")
+
+        alertas = []
+        if treated and pct_preco_valido < 90:
+            alertas.append("A cobertura de preço numérico está abaixo do ideal. A régua pode ficar instável.")
+        if not np.isnan(pct_link) and pct_link < 80:
+            alertas.append("Baixa cobertura de link. Dificulta auditoria e remoção de duplicidade por URL.")
+        if not np.isnan(top3_share) and top3_share >= 50:
+            alertas.append("Alta concentração em poucas lojas. A régua pode refletir mais o marketplace dominante do que o mercado.")
+        if not np.isnan(outlier_pct) and outlier_pct >= 5:
+            alertas.append("Cauda de outliers relevante. Provável mistura de kits/multipacks e itens fora do padrão.")
+
+        if alertas:
+            st.warning("**Alertas executivos:** " + " ".join([f"• {a}" for a in alertas]))
+        else:
+            st.success("Base com qualidade e concentração dentro do esperado para leitura executiva.")
+
+        st.divider()
+
+        # =========================
+        # Tabelas rápidas (apoio)
+        # =========================
+        col1, col2, col3 = st.columns([1, 1.2, 1])
+
+        with col1:
+            st.markdown("**Top Palavras-chave (Tratado)**")
+            if has_kw:
+                top_kw = (
+                    df_tratado["palavra_chave"]
+                    .replace("", "(vazio)")
+                    .value_counts()
+                    .head(10)
+                    .reset_index()
+                )
+                top_kw.columns = ["Palavra-chave", "Linhas"]
+                st.dataframe(top_kw, use_container_width=True, height=320)
+            else:
+                st.caption("Coluna 'palavra_chave' não encontrada.")
+
+        with col2:
+            st.markdown("**Top Lojas (Pareto — Tratado)**")
+            if has_seller:
+                vc = df_tratado["seller"].replace("", "(vazio)").value_counts()
+                base = int(vc.sum()) if int(vc.sum()) > 0 else 1
+
+                pareto = vc.head(12).reset_index()
+                pareto.columns = ["Loja", "Linhas"]
+                pareto["Linhas"] = pd.to_numeric(pareto["Linhas"], errors="coerce").fillna(0).astype(int)
+
+                pareto["% Base"] = (pareto["Linhas"] / base * 100).round(1)
+                pareto["% Acumulado"] = pareto["% Base"].cumsum().round(1)
+
+                st.dataframe(pareto, use_container_width=True, height=320)
+            else:
+                st.caption("Coluna 'seller' não encontrada.")
+
+        with col3:
+            st.markdown("**Top Marcas (Tratado)**")
+            if has_brand:
+                top_brand = (
+                    df_tratado["marca"]
+                    .replace("", "(vazio)")
+                    .value_counts()
+                    .head(10)
+                    .reset_index()
+                )
+                top_brand.columns = ["Marca", "Linhas"]
+                st.dataframe(top_brand, use_container_width=True, height=320)
+            else:
+                st.caption("Coluna 'marca' não encontrada.")
+
+        st.divider()
+
+        st.subheader("Downloads (CSV)")
+        d1, d2, d3 = st.columns([1, 1, 1])
+
+        with d1:
+            st.download_button(
+                "Baixar Tratado",
+                data=df_to_csv_bytes(df_tratado, sep=sep_out),
+                file_name=f"{uploaded.name.replace('.csv','')}_tratado.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with d2:
+            st.download_button(
+                "Baixar Removidos",
+                data=df_to_csv_bytes(df_removidos, sep=sep_out),
+                file_name=f"{uploaded.name.replace('.csv','')}_removidos.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with d3:
+            st.download_button(
+                "Baixar Régua",
+                data=df_to_csv_bytes(regua, sep=sep_out, decimal=("," if sep_out == ";" else ".")),
+                file_name=f"{uploaded.name.replace('.csv','')}_regua_preco.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+    with tab_tratado:
+        st.subheader("Base Tratada")
+        st.caption("Visão executiva: colunas-chave para leitura em reunião.")
+        st.dataframe(
+        df_tratado_view_display.head(200),
+        use_container_width=True,
+        column_config={
+            "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
+            "Rating": st.column_config.NumberColumn("Rating", format="%.2f"),
+            "Qtd. Reviews": st.column_config.NumberColumn("Qtd. Reviews", format="%d"),
+        },
+    )
+
+    with tab_removidos:
+        st.subheader("Removidos")
+        if len(df_removidos) == 0:
+            st.success("Nenhuma linha removida nesta execução.")
+        else:
+            st.dataframe(df_removidos.head(200), use_container_width=True)
+
+    with tab_regua:
+        st.subheader("Régua de Preço")
+        st.caption("Visão enxuta: somente faixas Econômica / Média / Premium.")
+        st.dataframe(regua_exec, use_container_width=True)
