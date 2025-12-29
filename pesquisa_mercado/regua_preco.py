@@ -429,7 +429,7 @@ with st.sidebar:
     sep_out = st.selectbox("Separador de exportação", [";", ","], index=0)
     aplicar_limpeza = st.checkbox("Aplicar limpeza antes da régua", value=True)
 
-    st.subheader("Régua (robustez)")
+    st.subheader("Critério de Outlier")
     outlier_mode = st.selectbox(
         "Tratamento de outliers (apenas no cálculo da régua)",
         ["Nenhum", "Winsor P1/P99", "IQR 1.5x", "IQR 3.0x", "MAD z=3.5"],
@@ -798,14 +798,14 @@ else:
     with tab_tratado:
         st.subheader("Base Tratada")
         st.caption("Visão executiva: colunas-chave para leitura em reunião.")
-        st.dataframe(df_tratado_view.head(200), use_container_width=True)
+        st.dataframe(df_tratado_view, use_container_width=True)
 
     with tab_removidos:
         st.subheader("Removidos")
         if len(df_removidos) == 0:
             st.success("Nenhuma linha removida nesta execução.")
         else:
-            st.dataframe(df_removidos.head(200), use_container_width=True)
+            st.dataframe(df_removidos, use_container_width=True)
 
     with tab_regua:
         st.subheader("Régua de Preço")
