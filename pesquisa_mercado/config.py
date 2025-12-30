@@ -68,7 +68,7 @@ SERPAPI_ENGINE_FALLBACK = os.getenv("SERPAPI_ENGINE_FALLBACK", "google_shopping_
 try:
     SERPAPI_RETRY_EMPTY = int(os.getenv("SERPAPI_RETRY_EMPTY", "1"))
 except ValueError:
-    SERPAPI_RETRY_EMPTY = 1
+    SERPAPI_RETRY_EMPTY = 0
 
 # A SerpApi documenta a paginação pelo parâmetro "start" em saltos típicos de 60.
 # Para evitar duplicidade / buracos entre páginas, usamos 60 como default.
