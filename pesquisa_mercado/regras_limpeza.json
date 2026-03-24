@@ -1,0 +1,48 @@
+{
+  "filtros_globais": {
+    "termos_exclusao_regex": [
+      "\\bvinil\\b",
+      "papel\\s+de\\s+parede",
+      "\\bcontact\\b",
+      "\\bimpress(?:ao|ão|)\\b",
+      "impress",
+      "\\bplotter\\b",
+      "lamina(?:ç|c)ao",
+      "laminação",
+      "laminacao"
+    ]
+  },
+  "regras_por_palavra_chave": {
+    "rolos adesivos": {
+      "termos_obrigatorios_ou_de_seguranca": [
+        "tira pelos", "tira-pelos", "pelos", "roupa", "pet", "refil"
+      ]
+    },
+    "panos multiuso": {
+      "termos_exclusao_adicionais": [
+        "decorativ", "decoração"
+      ]
+    },
+    "anti mofo": {
+      "termos_obrigatorios_ou_de_seguranca": [
+        "mofo", "umidad", "desumid", "absorv", "antimofo", "anti mofo"
+      ]
+    },
+    "esponjas inox": {
+      "termos_exclusao_adicionais": [
+        "lavabo", "banheiro", "escova sanit", "lixeira", "suporte", "porta", "prateleira", "dispenser"
+      ]
+    }
+  },
+  "controle_incoerencia_preco": {
+    "limite_preco_alto_para_itens_pequenos": 10000,
+    "termos_item_pequeno": [
+      "refil", "refill", "pano", "panos", "esponja", "esponjas", "rolo", "rolos",
+      "tira pelos", "tira-pelos", "absorvedor", "anti mofo", "antimofo", "lã de aço",
+      "la de aco", "palha de aço", "palha de aco"
+    ],
+    "termos_item_em_lote": [
+      "kit", "caixa", "fardo", "atacado", "unid", "unidades", "pacote", "c/"
+    ]
+  }
+}
