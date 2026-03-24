@@ -1,109 +1,72 @@
-# Pesquisa de Mercado — Google Shopping (Python)
+# Pesquisa de Inteligência B2B — Pricing (Google Shopping)
 
-Projeto em Python para **coletar e processar resultados do Google Shopping** por palavra-chave, salvando saídas em **CSV** e oferecendo um **dashboard** para exploração.
+Aplicação robusta e autônoma desenvolvida em **Python + Streamlit** focado em **Inteligência de Pricing B2B**. O sistema extrai preços do mercado (Google Shopping), processa as regras de limpeza, formata uma régua estatística GBB (Good-Better-Best) e cruza os dados extraídos diretamente com o portfólio de produtos internos da empresa.
+
+Tudo executado num ambiente puramente visual e fácil, além de possuir integração total para análises e Dashboards avançados no **Power BI** usando armazenamento local **SQLite**.
 
 ---
 
-## Estrutura do projeto
+## 🏗️ Estrutura Atualizada do Projeto
+
+O fluxo modular agora acontece majoritariamente ao redor de **`app_v2.py`** e usa **`database.py`** para rastreamento longitudinal temporal de todas pesquisas de mercado. 
 
 ```text
 pesquisa_mercado/
-├─ outputs/                    # arquivos gerados (CSVs)
-├─ referenciais/               # referências (ex.: marcas conhecidas)
-│  ├─ __init__.py
-│  └─ marcas_conhecidas.py
-├─ .env                        # variáveis de ambiente (não versionar)
-├─ config.py
-├─ dashboard.py
-├─ fuzzy_matching.py
-├─ google_shopping_client.py
-├─ main.py
-└─ processador_resultados.py
+├─ outputs/                    # Exportações sob demanda
+├─ .env                        # Chaves de API (não versionar)
+├─ historico_pricing.db        # Banco SQLite local (dados ODS PBI)
+├─ Iniciar_App.bat             # Atalho nativo para inicialização com duplo clique!
+├─ app_v2.py                   # 🔥 Nova Aplicação Principal (Streamlit)
+├─ core_v2.py                  # Core Engine com extração e GBB rules
+├─ database.py                 # Integração SQLite Auto-Migrável e Exports PBI
+├─ config.py                   # Configurações de diretórios
+├─ google_shopping_client.py   # Client REST para o Google
+├─ regras_limpeza.json         # Dicionário de regras dinâmicas anti-sujeira
+└─ processador_resultados.py   # Parsing das SERPs JSON da API
 ```
 
 ---
 
-## Pré-requisitos
+## 🚀 Como Executar
 
-- Python 3.10+ (recomendado)
-- Ambiente virtual (recomendado)
+A complexidade do terminal tornou-se no passado! Agora o dashboard possui acionamento _One-Click_.
 
----
+1. Vá até a sua Área de Trabalho e clique no **`Iniciar_Pesquisa_de_Mercado.bat`**, ou execute o **`Iniciar_App.bat`** criado na pasta do projeto.
+2. Atrás dos panos, o script vai automaticamente ativar o `.venv` e executar um comando `streamlit run app_v2.py`.
+3. Uma tela no seu navegador padrão abrirá automaticamente o Sistema!
 
-## Instalação
-
-### 1) Criar e ativar o ambiente virtual
-
-**Windows**
-```bash
-python -m venv .venv
-.\.venv\Scripts\activate
-```
-
-**Linux/macOS**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2) Instalar dependências
-
-> Use o arquivo de dependências que existir no seu repositório (ex.: `requirements.txt` ou `pyproject.toml`).
-
-Exemplo (`requirements.txt`):
-```bash
-pip install -r requirements.txt
-```
+> **Se preferir executar no modo Desenvolvedor (Terminal):**
+> Visto que você possui as dependências instaladas, apenas rode `.\.venv\Scripts\activate` para ativar o ambiente virtual, seguido por `streamlit run app_v2.py` ou `python -m streamlit run app_v2.py`.
 
 ---
 
-## Configuração do `.env`
+## 🔎 Fluxo em 3 Etapas (Como usar)
 
-- **Não commitar** o arquivo `.env` (ele pode conter chaves/segredos).
-- Mantenha um `.env.example` com **os nomes das variáveis** (sem valores reais).
+**Etapa 1: Extração Mercado (Google Shopping)**
+- Você envia uma lista de Categoria/Palavras Chaves (ex: "Computador i7", "Teclado").
+- O Engine puxa o cenário competitivo da SERP e aplica **Limpeza Tukey / IQR e Anti-Keywords** contidas no `regras_limpeza.json`.
+- É traçada a Régua Estatística e salvos localmente os posicionamentos (Good, Better e Best ou "Econômico, Intermediário e Premium").
 
-Exemplo de `.env.example` (ajuste para as suas variáveis reais):
-```env
-OUTPUT_DIR=outputs
-# EXEMPLOS (se aplicável ao seu fluxo)
-# GOOGLE_API_KEY=
-# DEFAULT_KEYWORD=
-```
+**Etapa 2: A Tabela Mestra (Input)**
+- O usuário faz upload do escopo/planilha de precificação que possui atualmente (Onde estão informados "Seu Preço").
 
----
-
-## Como executar
-
-### Rodar o fluxo principal
-
-```bash
-python main.py
-```
-
-As saídas (CSVs) serão gravadas em `outputs/`.
+**Etapa 3: Cruzamento Oportunista Analytics**
+- O sistema varre as pesquisas feitas, entende em que quartil o produto entra da concorrência e o reposiciona (Se for mais baixo a média de mercado para crescer marckup, se foi alto demais ele sinaliza fuga de Market Share).
+- É formatado um Arquivo Completo de Exportação Excel C-Level.
 
 ---
 
-## Dashboard (Streamlit)
+## 📊 Integração ODS com Power BI
 
-Para iniciar o dashboard:
-
-```bash
-streamlit run dashboard.py
-```
+Toda pesquisa do passo 1 e os cruzamentos de portfólio do passo 3 geram *snapshots temporais* na base ODS `historico_pricing.db`. Ou seja: todo preço capturado mantém sua **data histórica real**.
+- Uma barra lateral no Dashboard tem um link direto no Streamlit permitindo **"📥 Exportar Base Master PBI"**.
+- Apenas um clique descarrega todos os recortes históricos purificados e formatados que podem integrar com relatórios BI de painel C-Level.
 
 ---
 
-## Saídas geradas
+## 🛠️ Manutenção (Git & Atualizações)
 
-Os resultados ficam em `outputs/` com nomes no padrão:
-
-- `resultado_google_shopping_<palavra_chave>.csv`
-
----
-
-## Boas práticas (Git)
-
-- Versione o código (`*.py`) e arquivos de configuração não sensíveis.
-- Ignore: `.env`, `.venv/`, `__pycachecache__/`, `__pycache__/` e saídas regeneráveis em `outputs/`.
-
+Arquivos não rastreados que NUNCA devem ir ao Git:
+- `.env` (Chaves privadas)
+- `historico_pricing.db` (Banco local, é seu Master ODS particular, não deve ir ao respositório)
+- Diretórios de cache como `__pycache__` ou a virtualenv `.venv`
